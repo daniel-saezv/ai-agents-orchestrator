@@ -19,23 +19,24 @@ flowchart TD
   D --> E
   E --> F[Elegir y escribir la justificacion]
   F --> G{Senal documentada que recibe el orquestador}
-  G -->|si| H[Adoptar sin piloto]
+  G -->|si| H[Saltar el piloto]
   G -->|no| I[La primera tarea real es el piloto]
-  H --> J{La accion exige prueba humana}
+  H --> J{Puede ejecutar la accion}
   I --> J
-  J -->|falta| K[Parar y guardar la prueba pendiente]
-  J -->|no hace falta o ya esta| L[Ejecutar y sumar el coste]
+  J -->|falta respuesta o prueba| K[Parar y preguntar]
+  J -->|decide_solo o prueba guardada| L[Ejecutar y sumar el coste]
 ```
 
-Lista de salida. Las siete tienen que cumplirse:
+Lista de salida. Las ocho tienen que cumplirse:
 
 1. El perfil valida contra el esquema en ese momento.
 2. La plataforma elegida está habilitada en el perfil.
 3. Hay un mapa de esa plataforma con `caduca_en` en el futuro y con fuentes.
-4. Hay una decisión de integración atada a ese mapa, con las siete respuestas. O está `adoptada` y sin caducar (piloto cumplido o vía rápida), o está `en_piloto` porque esta tarea es el piloto y `piloto.motivo` está escrito.
-5. La acción que se va a ejecutar tiene prueba humana si está en `aprobaciones`. La prueba nombra a `quien`. La aprobación de otro agente no cuenta.
-6. `coste_estimado` más `coste_de_vigilar` cabe en el tope por tarea, y esa suma más el acumulado del periodo cabe en el tope del periodo.
-7. La justificación ya está escrita en el registro del consumidor.
+4. Hay una decisión de integración atada a ese mapa, con las siete respuestas. Para lanzar, o está `adoptada` y sin caducar, o está `en_piloto` porque esta tarea es el piloto y `piloto.motivo` está escrito. Una vía rápida en `propuesta`, a la espera de `adoptar_integracion`, no basta.
+5. Autonomía de la acción que se va a ejecutar. Si está en `pregunta` y no hay respuesta, se para. Si no está en `decide_solo` ni en `pregunta`, se trata como `pregunta`. Si también está en `aprobaciones`, no es autónoma: la deja pasar el punto 6. Si está en los dos, la misma prueba vale como respuesta y como aprobación.
+6. Si la acción está en `aprobaciones`, hay una prueba humana guardada. La prueba nombra a `quien`. La aprobación de otro agente no cuenta. Si no está en `aprobaciones`, este punto se cumple solo.
+7. `coste_estimado` más `coste_de_vigilar` cabe en el tope por tarea, y esa suma más el acumulado del periodo cabe en el tope del periodo.
+8. La justificación ya está escrita en el registro del consumidor.
 
 ## 1. Perfil del consumidor
 
@@ -102,7 +103,7 @@ Aprobación. La puerta la mira antes de cada acción de la lista, no solo antes 
 | `quien` | string | sí | Persona o rol humano. Un agente no vale como `quien`. |
 | `prueba` | enum | sí | Qué se guarda: `revision_humana`, `comentario_humano` o `registro_firmado`. |
 
-Acciones que pueden exigir aprobación: `fusionar`, `aprobar_ejecucion`, `primer_uso_de_plataforma`, `adoptar_integracion`, `crear_canal_de_escucha`, `superar_tope`, `escribir_en_repo_ajeno`, `entregar_secreto`.
+Acciones que pueden exigir aprobación: `lanzar`, `fusionar`, `aprobar_ejecucion`, `primer_uso_de_plataforma`, `adoptar_integracion`, `crear_canal_de_escucha`, `superar_tope`, `escribir_en_repo_ajeno`, `entregar_secreto`.
 
 La prueba se guarda en el registro de la tarea, en `pruebas[]`: `accion`, `quien`, `tipo`, `referencia` y `momento`. `referencia` es un id o una URL, nunca un secreto. Cuenta solo si `quien` es el de esta fila y no es un agente. La aprobación de otro agente no cuenta, aunque la plataforma la muestre como aprobación. Sin esa prueba, la acción no se ejecuta.
 
@@ -223,14 +224,14 @@ Esquema `registro-justificacion/v0.1`:
 | `perfil_id` | string | sí | |
 | `perfil_actualizado_en` | date-time | sí | La versión del perfil usada. |
 | `mapas` | array de string | sí | Ids de mapas leídos. |
-| `decision_id` | string o null | sí | La decisión `adoptada` o `en_piloto`. Null solo si la puerta se paró antes de escribirla. |
+| `decision_id` | string o null | sí | La decisión `propuesta`, `adoptada` o `en_piloto`. Null solo si la puerta se paró antes de escribirla. |
 | `rasgos` | objeto | sí | Los cuatro niveles. |
 | `rasgos_por_defecto` | array de string | sí | Rasgos que faltaban y se rellenaron con `medio`. Vacío si vinieron todos. |
 | `candidatos` | array | sí | Cada uno: `plataforma_id`, `agente_id`, `encaja` (boolean), `motivo`. |
 | `elegido` | objeto o null | sí | `plataforma_id`, `agente_id`, `parametros` (objeto). Null si no hay elección. |
 | `por_que` | string | sí | |
 | `coste_estimado` | objeto | sí | `importe`, `moneda`, `descuentos_aplicados` (array de string). |
-| `coste_de_vigilar` | objeto | sí | `importe`, `moneda`. Lo que cuesta esperar o escuchar la señal en esta tarea. Sale de la opción elegida. |
+| `coste_de_vigilar` | objeto | sí | `importe`, `moneda`. La opción trae `unidad` y `cantidad_estimada`. Si `unidad` ya es `presupuesto.moneda`, `importe` es esa cantidad. Si no, se convierte con la tarifa o con `coste.conversion` del mapa. Sin tasa, se pregunta antes de lanzar. |
 | `coste_real` | objeto | sí | `importe` (number o null), `moneda`, `cerrado` (boolean). Null y `cerrado` false hasta que la tarea termina. |
 | `pruebas` | array | sí | Cada una: `accion`, `quien`, `tipo`, `referencia`, `momento`. Vacío si todavía no hay ninguna. |
 | `autonomia` | enum | sí | `decidido` o `preguntado`. |
@@ -238,7 +239,7 @@ Esquema `registro-justificacion/v0.1`:
 
 ## 4. Estrategia de integración
 
-Antes del primer uso hay una decisión escrita, y otra cada vez que cambie un hecho del que depende. Si el mapa documenta una señal de fin que el orquestador puede recibir, se adopta sin piloto. Si no, la primera tarea real es el piloto y se anota el motivo. Sin la decisión escrita, la puerta no ejecuta la acción.
+Antes del primer uso hay una decisión escrita, y otra cada vez que cambie un hecho del que depende. Si el mapa documenta una señal de fin que el orquestador puede recibir, se salta el piloto. Esa vía adopta sola solo si `adoptar_integracion` está en `decide_solo`. Si está en `aprobaciones`, pide la aprobación igual y no adopta todavía. Si no hay esa señal, la primera tarea real es el piloto y se anota el motivo. Sin la decisión escrita, la puerta no ejecuta la acción.
 
 El agente no crea un canal nuevo ni copia la estrategia a su memoria durable hasta tener escritas las respuestas de abajo. `memoria_durable_actualizada` solo puede ser true cuando el estado es `adoptada`.
 
@@ -262,12 +263,12 @@ Si solo hay una, no se inventa otra. `motivo_unica` dice por qué las demás est
 
 Elegida la opción, hay dos salidas. Da igual que hubiera una alternativa real o varias:
 
-- Si el mapa documenta una señal de fin que el orquestador puede recibir (`documentado` true, `quien_recibe` `orquestador` o `ambos`, `emisor_puede_enviarlo` true), se adopta sin piloto. `piloto.estado` es `no_aplica` y `piloto.motivo` lo dice. Esta adopción no espera a `adoptar_integracion`.
-- Si no, la primera tarea real es el piloto y se anota el motivo. `estado` queda `en_piloto`, `piloto.motivo` dice por qué no hubo vía rápida y `lanzado` puede ser true. Si `adoptar_integracion` está en `aprobaciones`, se exige al cerrar el piloto, no para arrancar esa primera tarea.
+- Si el mapa documenta una señal de fin que el orquestador puede recibir (`documentado` true, `quien_recibe` `orquestador` o `ambos`, `emisor_puede_enviarlo` true), se salta el piloto. `piloto.estado` es `no_aplica` y `piloto.motivo` lo dice. Pasa a `adoptada` en ese momento solo si `adoptar_integracion` está en `decide_solo`. Si está en `aprobaciones` o en `pregunta`, se pide la aprobación, `estado` queda en `propuesta` y `lanzado` queda en false hasta guardar la prueba.
+- Si no, la primera tarea real es el piloto y se anota el motivo. `estado` queda `en_piloto` y `piloto.motivo` dice por qué no hubo vía rápida. `lanzado` puede ser true si `lanzar` está en `decide_solo`. `adoptar_integracion`, si está en `aprobaciones` o en `pregunta`, se exige al cerrar el piloto, no para arrancar esa primera tarea. Si está en `decide_solo`, el cierre del piloto adopta sin otra pregunta.
 
 Un canal nuevo no se crea mientras la autenticación del destino siga pendiente. Un canal que el orquestador ya tiene puede pasar a `en_piloto` con esa respuesta en `pendiente`. El piloto no se da por cumplido hasta cerrarla.
 
-Si no hubo vía rápida, el piloto puede ser una tarea más pequeña o, cuando no hay otra señal, la primera tarea real. Los criterios de paso se escriben antes. El resultado se guarda en la decisión. Adoptar después del piloto es un paso distinto: si `adoptar_integracion` está en `aprobaciones` o en `pregunta`, el agente deja el estado en `en_piloto` hasta esa prueba.
+Si no hubo vía rápida, el piloto es la primera tarea real. Los criterios de paso se escriben antes. El resultado se guarda en la decisión. Adoptar después sigue la misma regla: sola si `adoptar_integracion` está en `decide_solo`. Si está en `aprobaciones` o en `pregunta`, el estado sigue en `en_piloto` hasta esa prueba.
 
 ### 4.1 Cuándo se rehace
 
@@ -298,9 +299,11 @@ Esquema `decision-integracion/v0.1`. Vive en el almacén del consumidor.
 
 Cada opción guarda las siete respuestas y su `estado` (`propuesta`, `rechazada`, `elegida`): `id`, `resumen`, `como_se_que_termino` (`mecanismo`, `nombre`, `documentado`, `fuente`), `quien_recibe`, `autenticacion_destino` (`exige`, `emisor_puede_enviarlo`, `secreto_de_firma_no_equivale`, `fuente`), `reutiliza_canal_existente`, `escala_sin_cada_repo`, `coste_de_vigilar` (`unidad`, `cantidad_estimada`, `consume_presupuesto_de_modelo`, `fuente`), `modos_de_fallo`, `aprobaciones`. Esos campos se leen en la opción cuyo `id` es `opcion_elegida`. No se repiten en la raíz.
 
+El registro no copia `unidad` ni `cantidad_estimada`. Los pasa a `importe` y `moneda` con la tarifa del mapa de capacidades: si `unidad` es `presupuesto.moneda`, `importe` es `cantidad_estimada`; si no, usa `coste.conversion`. Sin esa tasa, se pregunta antes de lanzar.
+
 El piloto: `estado` (`no_aplica`, `pendiente`, `hecho`, `fallido`), `motivo` (string), `criterios` (array; vacío solo si `estado` es `no_aplica`), `observado` (string), `fecha` (date-time o null). `motivo` dice por qué no hubo piloto o por qué esta tarea lo es.
 
-Para pasar a `adoptada` hay dos caminos, y en los dos se leen los campos de `opcion_elegida`. Vía rápida: la señal de fin está documentada, `quien_recibe` es `orquestador` o `ambos` y `emisor_puede_enviarlo` es true. Entonces `piloto.estado` es `no_aplica`. El otro camino: `piloto.estado` es `hecho` y `observado` dice que los criterios se cumplieron, con las mismas tres condiciones. En los dos, `quien_recibe` no puede ser solo `humano` cuando quien debe enterarse es el orquestador.
+Para pasar a `adoptada` se leen los campos de `opcion_elegida`, y `adoptar_integracion` tiene que estar en `decide_solo` o tener ya guardada la prueba de `aprobaciones`. Vía rápida: la señal de fin está documentada, `quien_recibe` es `orquestador` o `ambos` y `emisor_puede_enviarlo` es true. Entonces `piloto.estado` es `no_aplica`. El otro camino: `piloto.estado` es `hecho` y `observado` dice que los criterios se cumplieron, con las mismas tres condiciones. En los dos, `quien_recibe` no puede ser solo `humano` cuando quien debe enterarse es el orquestador. Si `adoptar_integracion` está en `aprobaciones` y la prueba no está, el estado no pasa a `adoptada`: en la vía rápida se queda en `propuesta`.
 
 ## 5. Separación
 
@@ -462,10 +465,8 @@ La a) queda `rechazada` por el veto del dueño, anterior a cualquier prueba. El 
 
 La b) no llega a crearse. Dos respuestas del apartado 4 salen negativas:
 
-- Autenticación. El destino exige `Authorization`. La página de validación dice que el secret firma el cuerpo y que la firma viaja en `X-Hub-Signature-256`. La página de eventos lista las cabeceras de la entrega y no incluye `Authorization`. Las notas dicen que el webhook no puede enviar esa cabecera. Thrall indicó por error poner la clave en el campo "Secret". `emisor_puede_enviarlo` es false y `secreto_de_firma_no_equivale` es true. Se rechaza antes de crear el canal.
+- Autenticación. El destino exige `Authorization`. La página de validación dice que el secret firma el cuerpo y que la firma viaja en `X-Hub-Signature-256`. La página de eventos lista las cabeceras de la entrega y no incluye `Authorization`. Las notas dicen que el webhook no puede enviar esa cabecera. Thrall indicó por error poner la clave en el campo "Secret". `emisor_puede_enviarlo` es false y `secreto_de_firma_no_equivale` es true. Se rechaza antes de crear el canal. El diseño no habría creado la rutina que luego se borró, ni habría escrito la clave en ese campo.
 - Escala. Las notas dicen que habría que configurarlo en cada repo. Con `acepta_configuracion_por_repo` en false, se rechaza antes de probarla.
-
-La rutina que en los hechos se creó y luego se borró, el diseño no la habría creado. Thrall indicó por error poner la clave en el campo "Secret"; el diseño no la habría escrito ahí.
 
 La c) es la que queda para pilotar. Reutiliza el listener de GitHub de Grok Bot, que el orquestador ya tiene: una rutina por PR, filtrada por esa PR, con los seis eventos de las notas, y se borra al mergear o cerrar. No añade un webhook en cada repo y no pide una `Authorization` que el webhook de GitHub no envía. `reutiliza_canal_existente` es true. Las notas no dicen cómo se autentica ese listener: queda `pendiente`, y por eso puede entrar en `en_piloto` sin ser un canal nuevo. No se copia a la memoria durable. No se marca `adoptada`: las notas dicen que no hay resultado.
 
@@ -553,19 +554,19 @@ Las listas de modelos de “Changing the AI model” y del campo `model` de la A
 
 Los tres son ficticios. La tarea de ejemplo es la misma: “añadir un test de regresión pequeño”, con rasgos `razonamiento: bajo`, `contexto: bajo`, `velocidad: medio`, `coste: bajo`. Ninguno es la configuración de un consumidor real.
 
-En los tres, `adoptar_integracion` está en `aprobaciones` y en `pregunta`, y `acepta_configuracion_por_repo` es false. Esa aprobación cierra un piloto. No frena la vía rápida: si la señal de fin está documentada y la recibe el orquestador, la decisión queda `adoptada` sin esa prueba. `fusionar` sigue exigiendo prueba humana. No se copia a la memoria durable una decisión que no esté `adoptada`.
+En los tres, `lanzar` está en `decide_solo`. `adoptar_integracion` está en `aprobaciones` y en `pregunta`, con `quien` la persona del perfil y `prueba` `revision_humana`. `fusionar` está en `aprobaciones`, con el mismo `quien` y la misma `prueba`. `acepta_configuracion_por_repo` es false. La vía rápida salta el piloto, pero no adopta sola: pide esa prueba y deja `lanzado` en false hasta guardarla. `fusionar` sigue exigiendo la suya. No se copia a la memoria durable una decisión que no esté `adoptada`.
 
 ### 7.1 Una sola plataforma
 
-`perfil-una` solo habilita `plataforma-ficticia-a`. Presupuesto: 2 USD por tarea y 40 USD al mes, `al_superar: preguntar`. Prioridad `equilibrio`. `fusionar` está en `aprobaciones`, con `quien` la persona del perfil y `prueba` `revision_humana`.
+`perfil-una` solo habilita `plataforma-ficticia-a`. Presupuesto: 2 USD por tarea y 40 USD al mes, `al_superar: preguntar`. Prioridad `equilibrio`.
 
 1. Valida el perfil. Hay una plataforma y una referencia de credencial. Pasa.
 2. El mapa de `plataforma-ficticia-a` está caducado. `refrescar_mapa` está en `decide_solo`. Descubre solo esa plataforma y guarda una instantánea nueva. `caduca_en` queda a 7 días.
 3. No hay segunda plataforma que comparar. El mapa ficticio vigente lista un agente capaz de editar tests. La señal de fin está documentada, es una consulta y `quien_recibe` es `orquestador`. El coste estimado es 0,40 USD y `coste_de_vigilar` es 0. La suma cabe en el tope y en el hueco del mes, que parte de cero.
 4. Escribe el registro con `elegido.plataforma_id = plataforma-ficticia-a`, `coste_estimado` 0,40, `coste_de_vigilar` 0, `coste_real.cerrado` false y `por_que` igual a “el perfil solo habilita esta plataforma; el coste cabe”.
 5. Arma dos opciones. Sondear el estado que la fuente documenta es alternativa real: la recibe el orquestador y el emisor puede autenticar la consulta. Instalar un fichero de evento en cada repositorio queda `rechazada` sin piloto: no escala, y el perfil no acepta configuración por repositorio. `motivo_unica` dice eso. No se inventa una segunda viable.
-6. Vía rápida. La señal está documentada y la recibe el orquestador, así que `opcion_elegida` apunta a la consulta, `estado` es `adoptada`, `piloto.estado` es `no_aplica` y `piloto.motivo` lo explica. No espera a `adoptar_integracion`. `caduca_en` es 30 días desde `vigente_desde`.
-7. La puerta deja `lanzado` en true. `fusionar` no se ejecuta: falta la `revision_humana` de la persona del perfil. Una aprobación de otro agente no cuenta.
+6. Vía rápida. La señal está documentada y la recibe el orquestador, así que se salta el piloto: `opcion_elegida` apunta a la consulta, `piloto.estado` es `no_aplica` y `piloto.motivo` lo explica. `adoptar_integracion` está en `aprobaciones`, no en `decide_solo`, así que `estado` queda en `propuesta`, `autonomia` en `preguntado` y `lanzado` en false.
+7. Cuando la persona guarda la `revision_humana`, pasa a `adoptada`. `caduca_en` es 30 días desde `vigente_desde`. `lanzar` está en `decide_solo`, así que entonces `lanzado` queda en true. `fusionar` no se ejecuta: falta su prueba. Una aprobación de otro agente no cuenta.
 
 ### 7.2 Dos plataformas
 
@@ -577,7 +578,7 @@ En los tres, `adoptar_integracion` está en `aprobaciones` y en `pregunta`, y `a
 4. El registro lista los dos candidatos, con `encaja: true`, y `elegido` en B. `por_que` cita el importe y la prioridad.
 5. La decisión se exige solo para B, que es la que se va a usar. A puede seguir sin decisión.
 6. El cuestionario de B deja una sola alternativa real: la consulta documentada. La opción de un fichero por repositorio queda `rechazada` y `motivo_unica` lo dice.
-7. Vía rápida: se adopta sin piloto y `lanzado` queda en true. Si esa consulta fallara al ejecutarse, el agente vuelve al paso 3 con B descartada y repite la integración para A antes de usarla.
+7. Vía rápida: se salta el piloto y `piloto.estado` es `no_aplica`. Como `adoptar_integracion` está en `aprobaciones`, `estado` queda en `propuesta` y `lanzado` en false hasta la `revision_humana`. Con esa prueba, pasa a `adoptada` y lanza, porque `lanzar` está en `decide_solo`. Si esa consulta fallara al ejecutarse, el agente vuelve al paso 3 con B descartada y repite la integración para A antes de usarla.
 
 ### 7.3 Ninguna plataforma del caso aplicado
 
@@ -658,7 +659,7 @@ El framework se referencia por una revisión fija. El consumidor no copia `nucle
 | Decisión | Opciones | Recomendación |
 | --- | --- | --- |
 | Qué cambio del mapa invalida la integración | Cualquier campo; solo las rutas listadas en `depende_de` | `depende_de`. Si viene vacío, invalidan `fin`, `lanzamiento`, `aprobaciones` y `configuracion_repo`. Un cambio de precio no repite el piloto. |
-| Quién adopta tras un piloto que pasó | Siempre una persona; el perfil puede poner `adoptar_integracion` en `decide_solo` | Fuera de la vía rápida, lo decide el perfil. Los tres perfiles de prueba dejan el cierre del piloto en aprobación humana. La vía rápida no espera esa aprobación. |
+| Quién adopta | Siempre una persona; el perfil puede poner `adoptar_integracion` en `decide_solo` | Lo decide el perfil, también en la vía rápida. Adopta sola solo si esa acción está en `decide_solo`. Si está en `aprobaciones`, la vía rápida salta el piloto y pide la prueba igual. Los tres perfiles de prueba la dejan en aprobación humana. |
 | Almacén del consumidor | Git; almacén de clave-valor | Git para perfil, fichas, mapas, decisiones y registro. Los secretos, en un gestor, solo referenciados. |
 | Forma del registro | Un JSON por tarea; un JSONL append-only | Un JSON por tarea, en `registro/<año>/<mes>/`. Se revisa en el diff. |
 | Enumerado de autonomía | Cerrado, como aquí; texto libre | Cerrado. Lo que no esté en `decide_solo` ni en `pregunta` se pregunta. |
@@ -676,8 +677,8 @@ Esquemas, validador, núcleo y CI. Cada paso se da por hecho solo si su comproba
 
 El simulador de la puerta queda para después de la fase 2.
 
-1. Implementar la puerta de salida sobre fixtures, sin red. Comprobación: con una sola plataforma y una señal de fin documentada que recibe el orquestador, la decisión queda `adoptada`, `piloto.estado` es `no_aplica` y el registro sale `lanzado: true`. Una opción con `emisor_puede_enviarlo` en false queda `rechazada` y no crea canal. `memoria_durable_actualizada` en true con estado distinto de `adoptada` hace fallar el validador. `fusionar` sin prueba humana no se ejecuta.
-2. La misma puerta con el perfil de dos plataformas. Comprobación: el registro elige la de menor coste estimado, sumado el de vigilar, y no exige decisión para la plataforma no elegida.
+1. Implementar la puerta de salida sobre fixtures, sin red. Comprobación: con el perfil de una plataforma, señal documentada que recibe el orquestador y `adoptar_integracion` en `aprobaciones`, `piloto.estado` es `no_aplica`, `estado` queda `propuesta`, `autonomia` es `preguntado` y `lanzado` es false. Otra fixture con `adoptar_integracion` en `decide_solo` queda `adoptada` y `lanzado` true. Una acción en `pregunta` sin respuesta no se ejecuta. Una opción con `emisor_puede_enviarlo` en false queda `rechazada` y no crea canal. `memoria_durable_actualizada` en true con estado distinto de `adoptada` hace fallar el validador. `fusionar` y `lanzar`, si están en `aprobaciones`, no se ejecutan sin prueba humana.
+2. La misma puerta con el perfil de dos plataformas. Comprobación: el registro elige la de menor coste estimado, sumado el de vigilar, no exige decisión para la plataforma no elegida y no deja `adoptada` la elegida mientras falte la prueba de `adoptar_integracion`.
 3. La misma puerta con el perfil de la sección 7.3, cuyo mapa marca el fin como `no_documentado`. Comprobación: la primera tarea queda como piloto, `piloto.motivo` está escrito, `autonomia` queda en `preguntado` por el veto y el registro no contiene líneas del bloque de la sección 6.
 4. Codificar la decisión de la sección 6.5 como fixture del cuestionario, con estado `en_piloto` y los criterios de piloto. Comprobación: el validador acepta esa fixture, rechaza una variante que adopte una entrega cuyo emisor no puede enviar la credencial que el destino exige, y rechaza una variante que use como fin el evento de pasar a revisión lista. Esta fixture puede vivir junto al caso aplicado y el job la excluye del barrido de nombres del núcleo.
 5. El piloto real de una issue espera credencial y aprobación del consumidor, y no forma parte de estas fases.
