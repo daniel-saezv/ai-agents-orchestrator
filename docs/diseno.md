@@ -36,7 +36,7 @@ Lista de salida. Las siete tienen que cumplirse:
 1. El perfil valida contra el esquema en ese momento.
 2. La plataforma elegida está habilitada en el perfil.
 3. Hay un mapa de esa plataforma con `caduca_en` en el futuro y con fuentes.
-4. Hay una decisión de integración `adoptada`, sin caducar, atada a ese mapa, con las seis respuestas, al menos dos opciones y un piloto que cumplió sus criterios.
+4. Hay una decisión de integración `adoptada`, sin caducar, atada a ese mapa, con las siete respuestas, al menos dos opciones y un piloto que cumplió sus criterios.
 5. Lanzar está en `decide_solo` y no está en `aprobaciones`.
 6. El coste estimado, con los descuentos que sigan vigentes, cabe en el tope.
 7. La justificación ya está escrita en el registro del consumidor.
@@ -94,6 +94,7 @@ Preferencias:
 | `idiomas` | array de string | sí | Puede estar vacío. |
 | `notas` | string | sí | Puede ser `""`. |
 | `vetos` | array de string | sí | Condiciones en texto. Una coincidencia obliga a preguntar. |
+| `acepta_configuracion_por_repo` | boolean | sí | Por defecto `false`. Con `false`, una opción que no escala se rechaza sin piloto. |
 
 Aprobación:
 
@@ -231,16 +232,23 @@ Esquema `registro-justificacion/v0.1`:
 
 Hace falta una decisión adoptada antes del primer uso de una plataforma, y otra cada vez que cambie un hecho del que esa decisión depende. Sin ella, la puerta de salida no llega al lanzamiento.
 
-El agente responde estas seis preguntas para cada opción. El esquema las hace obligatorias:
+El agente no crea el canal, no arranca el piloto y no copia la estrategia a su memoria durable hasta tener escritas las respuestas de abajo. `memoria_durable_actualizada` solo puede ser true cuando el estado es `adoptada`.
 
-1. Cómo sé que terminó: evento o consulta, y si está documentado.
-2. Quién recibe la señal: el orquestador, el humano, o los dos.
-3. Si escala sin configurar cada repositorio a mano.
-4. Cuánto cuesta vigilar, y si ese coste gasta el presupuesto del modelo.
-5. Los modos de fallo.
-6. Las aprobaciones.
+Responde estas siete preguntas para cada opción. El esquema las hace obligatorias:
+
+1. Cómo sé que terminó: evento o consulta, y si está documentado. Una señal no documentada puede entrar en un piloto como hecho observado. No pasa a contrato hasta que el piloto cumple los criterios y la decisión queda `adoptada`.
+2. Quién recibe la señal: el orquestador, el humano, o los dos. Si quien tiene que enterarse es el orquestador y la respuesta es solo el humano, esa opción no cierra la tarea.
+3. Qué puede autenticar el destino, y si el emisor puede enviar esa prueba. Un secreto de firma no sustituye una cabecera o un campo que el emisor no envía. Si no puede enviarlo, la opción pasa a `rechazada` antes de crear el canal y antes del piloto.
+4. Si escala sin configurar cada repositorio a mano. Con `acepta_configuracion_por_repo` en false, una opción que no escala pasa a `rechazada` antes de probarla.
+5. Cuánto cuesta vigilar, y si ese coste gasta el presupuesto del modelo.
+6. Los modos de fallo.
+7. Las aprobaciones.
+
+Si quien aprueba veta una opción antes del piloto, queda `rechazada`, con el veto escrito, y no se ejecuta. Eso no cuenta como piloto fallido.
 
 Tiene que comparar al menos dos opciones. Si la documentación solo ofrece una señal, la segunda opción es no usar la plataforma hasta tener otra señal. Comparar contra “no integrar todavía” cuenta.
+
+Un canal nuevo no se crea mientras la autenticación del destino siga pendiente. Un canal que el orquestador ya tiene puede pasar a `en_piloto` con esa respuesta en `pendiente`. El piloto no se da por cumplido hasta cerrarla.
 
 Después corre un piloto, más pequeño que la tarea real, en un repositorio que el perfil permita. Los criterios de paso se escriben antes del piloto. El resultado se guarda en la decisión. Adoptar es un paso distinto de pilotar: si `adoptar_integracion` está en `aprobaciones` o en `pregunta`, el agente deja el estado en `en_piloto` y espera.
 
@@ -270,16 +278,23 @@ Esquema `decision-integracion/v0.1`. Vive en el almacén del consumidor.
 | `caduca_en` | date-time | sí | |
 | `como_se_que_termino` | objeto | sí | Copia de la opción elegida, para que el esquema lo exija en la raíz. |
 | `quien_recibe` | enum | sí | `orquestador`, `humano`, `ambos`. |
+| `autenticacion_destino` | objeto | sí | La de la opción elegida. |
+| `autenticacion_destino.exige` | string | sí | Qué prueba pide el destino. `pendiente` si aún no se sabe. |
+| `autenticacion_destino.emisor_puede_enviarlo` | boolean o null | sí | Null si sigue pendiente. False rechaza la opción sin piloto. |
+| `autenticacion_destino.secreto_de_firma_no_equivale` | boolean | sí | True cuando un secreto de firma no cubre lo que el destino exige. |
+| `autenticacion_destino.fuente` | string | sí | |
+| `reutiliza_canal_existente` | boolean | sí | True solo si el orquestador ya tenía ese canal. |
 | `escala_sin_cada_repo` | boolean | sí | |
 | `coste_de_vigilar` | objeto | sí | `unidad`, `cantidad_estimada`, `consume_presupuesto_de_modelo` (boolean), `fuente`. |
 | `modos_de_fallo` | array de string | sí | Al menos uno. |
 | `aprobaciones` | array de string | sí | |
+| `memoria_durable_actualizada` | boolean | sí | Solo puede ser true si `estado` es `adoptada`. |
 
-Cada opción repite las seis respuestas: `id`, `resumen`, `como_se_que_termino` (`mecanismo`, `nombre`, `documentado`, `fuente`), `quien_recibe`, `escala_sin_cada_repo`, `coste_de_vigilar`, `modos_de_fallo`, `aprobaciones`.
+Cada opción repite las siete respuestas: `id`, `resumen`, `como_se_que_termino` (`mecanismo`, `nombre`, `documentado`, `fuente`), `quien_recibe`, `autenticacion_destino`, `reutiliza_canal_existente`, `escala_sin_cada_repo`, `coste_de_vigilar`, `modos_de_fallo`, `aprobaciones`.
 
 El piloto: `estado` (`pendiente`, `hecho`, `fallido`), `criterios` (array, mínimo 1), `observado` (string), `fecha` (date-time o null).
 
-Para pasar a `adoptada`, `piloto.estado` tiene que ser `hecho` y `observado` tiene que decir que los criterios se cumplieron.
+Para pasar a `adoptada`, `piloto.estado` tiene que ser `hecho`, `observado` tiene que decir que los criterios se cumplieron, `emisor_puede_enviarlo` tiene que ser true y `quien_recibe` no puede ser solo `humano` cuando quien debe enterarse es el orquestador.
 
 ## 5. Separación
 
@@ -351,13 +366,15 @@ Queda en el mapa como `no_documentado`, con las páginas de la tabla de fuentes:
 - Un evento de webhook cuyo nombre sea el fin de la sesión.
 - Un tipo de evento de timeline con el nombre del agente, tanto de inicio como de fin.
 - El id de tarea en la respuesta de asignar una issue, y si `GET /agents/repos/{owner}/{repo}/tasks` lista esa issue.
-- Qué usuarios reciben `agent_session_finished`, más allá de que el endpoint devuelve las notificaciones del usuario autenticado.
+- La página de notificaciones no dice que `agent_session_finished` llegue a un bot. Las notas del apartado 6.4 dicen que le llega al humano y no a los bots.
+- El nombre `copilot_work_finished`. No está en el catálogo de tipos de evento de issue ni en el de webhooks leídos el 2026-11-22. Las notas del apartado 6.4 lo observan.
+- El nombre de job `Running Copilot cloud agent`. No aparece en las páginas de la tabla de fuentes. Las notas del apartado 6.4 lo usan.
 - El nombre del workflow de Actions cuyo `workflow_run` completado sea el fin. Está documentado que parar la sesión acaba el run, y que el run de preparación es otro fichero.
 - Los campos de salida de `gh agent-task view`. El esquema REST de la sesión sí tiene `state` y `completed_at`, pero el empalme desde el número de pull request hasta el `task_id` no está en la página de la API.
 - Que `[WIP]` sea un contrato estable. Aparece en el tutorial.
 - Qué entorno usa el camino de asignar una issue: sandbox o Actions. El timeout de una hora y el fichero de preparación están descritos para Actions.
 
-### 6.3 Las seis preguntas, en tres opciones
+### 6.3 Las siete preguntas, sobre lo que dice la documentación
 
 Opción A. Hook `sessionEnd` dentro del repositorio.
 
@@ -369,6 +386,7 @@ Opción A. Hook `sessionEnd` dentro del repositorio.
 | Coste de vigilar | Sin créditos de IA añadidos en la documentación. El coste de operación es una regla de firewall y un endpoint. `consume_presupuesto_de_modelo: false`. |
 | Fallos | Silencio si falta el fichero, si el firewall corta la salida o si el job no es el del cloud agent. El disco no conserva el aviso. |
 | Aprobaciones | Escribir en el repositorio y, para salir de la red de GitHub, un administrador. |
+| Autenticación del destino | El hook es código del job y puede enviar la cabecera que el destino pida. Si el destino está fuera de la red permitida, el emisor no llega. |
 
 Opción B. Webhook de organización, o de GitHub App, sobre `pull_request` / `review_requested`, limitado a la pull request que el timeline de la issue enlazó. Se mira también `edited` por si el título pierde `[WIP]`.
 
@@ -380,41 +398,81 @@ Opción B. Webhook de organización, o de GitHub App, sobre `pull_request` / `re
 | Coste de vigilar | Sin créditos de IA. Cuesta hospedar el endpoint y el permiso para crear el webhook. |
 | Fallos | Una petición de revisión hecha por una persona produce el mismo evento. Una sesión posterior, por un comentario `@copilot`, puede repetirlo. `ready_for_review` no sirve: el agente no puede emitirlo y lo pulsa la persona. `opened` tampoco: la pull request en borrador aparece al empezar. |
 | Aprobaciones | Crear el webhook de organización o instalar la aplicación. |
+| Autenticación del destino | La entrega firma el cuerpo con el secret y envía `X-Hub-Signature-256`. Las cabeceras documentadas de esa entrega no incluyen una `Authorization` puesta por quien configura el webhook. Si el destino exige esa cabecera, el emisor no puede enviarla y la opción se rechaza antes de probarla. |
 
 Opción C. Sondeo de `GET /notifications` buscando `agent_session_finished`, y como apoyo `gh agent-task view` con el número de la pull request cuando el timeline ya la enlazó.
 
 | Pregunta | Respuesta |
 | --- | --- |
 | Cómo sé que terminó | Consulta. El `reason` está documentado. No es un webhook. |
-| Quién recibe la señal | La bandeja del usuario del token. El orquestador la lee si usa ese token. `humano`, observado por el orquestador. |
+| Quién recibe la señal | La página devuelve las notificaciones del usuario autenticado. No dice que un bot las reciba. Las notas del apartado 6.4 dicen que le llega al humano y no a los bots. |
 | ¿Escala sin tocar cada repo? | Sí. No hay fichero en el repositorio de trabajo. |
 | Coste de vigilar | Sin créditos de IA documentados. El ritmo lo marca `X-Poll-Interval`. Un 304 no gasta límite. Hace falta un PAT classic, no un fine-grained ni un token de instalación. |
 | Fallos | El `reason` del hilo se sustituye: si el sondeo llega tarde, puede ver `review_requested` y haber perdido `agent_session_finished`. Hay que guardar la primera observación. El CLI no documenta el campo que indica el fin. |
 | Aprobaciones | La persona crea el PAT classic y deja solo la referencia. |
+| Autenticación del destino | La consulta la autentica el token de ese usuario. No es una entrega entrante. La página no dice que la notificación llegue a un bot. |
 
 La opción de consultar `state` hasta `completed`, `failed`, `timed_out` o `cancelled` es la señal clara del camino `POST /agents/.../tasks`, porque ese camino devuelve el id. No es la señal del camino de la issue mientras el empalme no esté documentado. La página lista también `idle` y `waiting_for_user` y no dice que esos dos cierren la tarea. El piloto no los trata como fin.
 
-### 6.4 A qué decisión llega el agente
+Estas tres opciones salen de la documentación. La decisión está en el apartado 6.5, con las notas del apartado 6.4. Para los repos de esas notas, `review_requested` no se usa como fin: allí Copilot no lo emite al terminar.
 
-Llega a dejar la decisión en `en_piloto`, con la opción B elegida para una cuenta de organización y la opción C de respaldo si el piloto enseña que no hay webhook de organización ni de aplicación que cubra los repositorios sin configurarlos uno a uno. No la marca `adoptada`: el piloto no se ha ejecutado, y el procedimiento lo prohíbe.
+El hook `sessionEnd` sigue descartado como vía por defecto: es el evento de fin más directo que la documentación nombra, y exige un fichero en cada repositorio y, para avisar fuera, una excepción de firewall. Con `acepta_configuracion_por_repo` en false se rechaza antes de probarlo.
 
-Descarta A como vía por defecto. Es el evento de fin más directo y está documentado, y a la vez exige un fichero en cada repositorio y, para avisar fuera, una excepción de firewall. Esa es la clase de escucha que no escala. Sigue siendo una opción válida para un consumidor con un solo repositorio que ya administra esos hooks, y la comparación queda escrita.
+### 6.4 Incidente original
 
-Descarta usar como fin `ready_for_review`, `pull_request.opened`, el workflow `copilot-setup-steps` y un `workflow_run` genérico.
+Ejemplo real. Notas del equipo de los días 21 y 22 de noviembre de 2026. Lo que no está en esas notas queda pendiente. No se completa por documentación ni por cálculo.
 
-Criterios del piloto, de una sola issue, escritos antes de lanzarla:
+El problema era que no había una forma estándar de que los orquestadores, los bots de Grok Bot, supieran cuándo terminaba una tarea del agente en la nube de GitHub Copilot. Los ingenieros esperaban sin señal. El dueño lo detectó y pidió acordar una estrategia. Dijo, literal:
 
-1. Al aparecer la pull request en borrador, el orquestador no da la tarea por terminada.
-2. El orquestador recibe `review_requested` de esa pull request, o ve `agent_session_finished` en la notificación, sin haber añadido ficheros al repositorio.
-3. Anota quién emite `ready_for_review` si llega. No lo usa como fin.
-4. Anota si la lista de tareas contiene un id para esa issue. Si no lo contiene, lo deja en `no_documentado` y no bloquea la decisión.
-5. El coste de vigilar medido en el piloto sigue fuera del presupuesto de modelo.
+> no implementéis una rutina periodica y aún no configureis nada en vuestras memorias sobre esto. Busquemos la opción, estandar y común [...] teniendo en cuenta que realmente, no son los agentes en cloud que trabajan esto, si no [...] algo especifico de los grok bots
 
-Si el piloto cumple los criterios, el agente pide la adopción, porque `adoptar_integracion` queda como aprobación humana en el perfil de ejemplo. La decisión se guarda en el almacén de ese consumidor, con `caduca_en` corto: las APIs usadas están en public preview. `depende_de` apunta a `fin`, a `lanzamiento` y a `configuracion_repo`.
+Lo que se encontró:
 
-La recogida de resultados, una vez dada la señal, es la pull request enlazada, los commits (cada mensaje enlaza el log de sesión) y el log que sigue publicado después de destruir el entorno. Si el piloto encuentra un id de tarea, también los `artifacts` y `usage` de esa tarea.
+1. La notificación oficial de fin, `agent_session_finished`, le llega al humano y no a los bots.
+2. En esos repos Copilot no emite `review_requested` al terminar.
+3. Hay un evento de timeline no documentado, `copilot_work_finished`, que llega unos 4 s después de que acabe el job `Running Copilot cloud agent`. En la PR #20 del portfolio, Copilot terminó a las 23:53:01 y la PR quedó `ready_for_review` a las 00:06:55, cuando la movió una persona.
+4. La API de agent tasks, en preview, distingue `completed` y `failed`, pero solo consultándola.
+5. Los workflows de las ramas de Copilot necesitan que un humano pulse "Approve and run".
 
-### 6.5 Fuentes
+Opciones y resultado:
+
+| Opción | Qué se hizo | Resultado |
+| --- | --- | --- |
+| a) Rutina periódica de consulta | El dueño la descartó antes de probarla. | No se probó. |
+| b) Webhook del repo hacia el trigger webhook de una rutina de Grok Bot | Se intentó. | Falló. El trigger exige una cabecera `Authorization` y el webhook de GitHub no puede enviarla, porque solo firma con el secret. La clave se puso por error en el campo "Secret". También se descartó por no ser mantenible: habría que configurarlo en cada repo. La rutina se borró. |
+| c) Una rutina por PR con el listener de GitHub de Grok Bot | Se adoptó como piloto. Filtrada por PR. Eventos: `review-requested`, `pr-pushed`, `ci-passed`, `ci-failed`, `pr-merged` y `pr-closed`. Se borra sola al mergear o cerrar la PR. | El piloto está pendiente de la próxima tarea de Copilot. Todavía no hay resultado. No está validado. |
+
+Sigue pendiente, porque las notas no lo dicen: por qué en esos repos no se emite `review_requested`; el cuerpo de `copilot_work_finished` y si el timeline es el de la issue o el de la pull request; la zona horaria de esas dos horas; la URL del portfolio y de la PR #20; si el listener del piloto recibe `copilot_work_finished`; cómo se autentica ese listener; si la rutina por PR hay que configurarla en cada repo; el resultado del piloto.
+
+### 6.5 Decisión que el diseño habría tomado
+
+El apartado 4, aplicado a estas tres opciones antes de implementar nada, descarta b) sin intentarla y deja c) en piloto, sin validar y sin copiarla a la memoria de los bots.
+
+La a) queda `rechazada` por el veto del dueño, anterior a cualquier prueba. El veto es la frase de arriba. No es un piloto fallido. La API de tareas sigue en el mapa como consulta documentada que distingue `completed` y `failed`. No se implementa una rutina periódica. La página REST lista además otros estados; las notas solo nombran esos dos.
+
+La b) no llega a crearse. Dos respuestas del apartado 4 salen negativas:
+
+- Autenticación. El destino exige `Authorization`. La página de validación dice que el secret firma el cuerpo y que la firma viaja en `X-Hub-Signature-256`. La página de eventos lista las cabeceras de la entrega y no incluye `Authorization`. Las notas dicen que el webhook no puede enviar esa cabecera y que la clave se puso por error en "Secret". `emisor_puede_enviarlo` es false y `secreto_de_firma_no_equivale` es true. Se rechaza antes de crear el canal.
+- Escala. Las notas dicen que habría que configurarlo en cada repo. Con `acepta_configuracion_por_repo` en false, se rechaza antes de probarla.
+
+La rutina que en los hechos se creó y luego se borró, el diseño no la habría creado. Tampoco habría escrito la clave en "Secret".
+
+La c) es la que queda para pilotar. Reutiliza el listener de GitHub de Grok Bot, que el orquestador ya tiene: una rutina por PR, filtrada por esa PR, con los seis eventos de las notas, y se borra al mergear o cerrar. No añade un webhook en cada repo y no pide una `Authorization` que el webhook de GitHub no envía. `reutiliza_canal_existente` es true. Las notas no dicen cómo se autentica ese listener: queda `pendiente`, y por eso puede entrar en `en_piloto` sin ser un canal nuevo. No se copia a la memoria durable. No se marca `adoptada`: las notas dicen que no hay resultado.
+
+El piloto, para la próxima tarea de Copilot, tiene estos criterios escritos antes de esa tarea:
+
+1. No dar por terminado en `review-requested`. En esos repos Copilot no emite `review_requested` al terminar. El tutorial dice que, al terminar, añade al usuario como revisor. Las dos cosas quedan en el mapa. Para este consumidor manda la observación.
+2. No dar por terminado en `ci-passed` ni en `ci-failed`. Las notas y la página de riesgos dicen que los workflows esperan a que una persona pulse "Approve and run".
+3. No dar por terminado al pasar a `ready_for_review`, ni en `pr-merged`, ni en `pr-closed`. En la PR #20 del portfolio el fin fue a las 23:53:01 y `ready_for_review` fue a las 00:06:55, movida por una persona. Borrar la rutina al mergear o cerrar es la limpieza, no la señal de fin.
+4. Anotar la hora de cada evento del listener junto a la hora de fin. El piloto pasa solo si alguno coincide con el fin, no con un gesto posterior de una persona.
+5. Anotar si aparece `copilot_work_finished`. Las notas lo observan, sin documentar, unos 4 s después de que acabe el job `Running Copilot cloud agent`. Los catálogos oficiales leídos el 2026-11-22 no lo nombran, y esas páginas tampoco nombran ese job. Si el listener no lo recibe, se anota. No se inventa un puente.
+6. No usar `agent_session_finished` para que el bot cierre la tarea. Las notas dicen que le llega al humano y no a los bots. La página de notificaciones solo describe el buzón del usuario autenticado.
+
+Si ninguno de los seis eventos del listener coincide con el fin, el piloto falla y la decisión no pasa a `adoptada`. `depende_de` apunta a `fin`, a `lanzamiento` y a `configuracion_repo`. `caduca_en` es corto: las APIs usadas están en public preview.
+
+La recogida de resultados, una vez dada una señal que cumpla el criterio 4, es la pull request enlazada, los commits (cada mensaje enlaza el log de sesión) y el log que sigue publicado después de destruir el entorno. Si en esa tarea aparece un id de la API de tareas, también `artifacts` y `usage`. Las notas no dicen que ese id aparezca al asignar una issue.
+
+### 6.6 Fuentes
 
 Consultadas el 2026-11-22.
 
@@ -442,6 +500,8 @@ Consultadas el 2026-11-22.
 | Tarifas por token | https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing |
 | Crédito = 0,01 USD; descuento de Fusion hasta el 2026-11-30 | https://docs.github.com/en/copilot/concepts/billing-and-usage/individuals/billing |
 | 10 % con selección automática | https://docs.github.com/en/copilot/concepts/models/auto-model-selection |
+| El secret firma la entrega; cabecera `X-Hub-Signature-256` | https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries |
+| Cabeceras de la entrega; el campo Secret al crear el webhook | https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks |
 
 ```text
 nombres-solo-en-este-caso:
@@ -450,11 +510,8 @@ copilot-swe-agent
 copilot/
 GitHub
 Cursor
+Grok
 ```
-
-### Incidente original
-
-Pendiente. El equipo aportará los detalles de lo que ocurrió con las escuchas. Este diseño no los reconstruye.
 
 <!-- ejemplo-aplicado:fin -->
 
@@ -462,7 +519,7 @@ Pendiente. El equipo aportará los detalles de lo que ocurrió con las escuchas.
 
 Los tres son ficticios. La tarea de ejemplo es la misma: “añadir un test de regresión pequeño”, con rasgos `razonamiento: bajo`, `contexto: bajo`, `velocidad: medio`, `coste: bajo`. Ninguno es la configuración de un consumidor real.
 
-En los tres, `adoptar_integracion` está en `aprobaciones` y en `pregunta`. El agente puede abrir el piloto y no puede dar la integración por adoptada.
+En los tres, `adoptar_integracion` está en `aprobaciones` y en `pregunta`, y `acepta_configuracion_por_repo` es false. El agente puede abrir el piloto y no puede dar la integración por adoptada. No copia la estrategia a su memoria durable.
 
 ### 7.1 Una sola plataforma
 
@@ -472,7 +529,7 @@ En los tres, `adoptar_integracion` está en `aprobaciones` y en `pregunta`. El a
 2. El mapa de `plataforma-ficticia-a` está caducado. `refrescar_mapa` está en `decide_solo`. Descubre solo esa plataforma y guarda una instantánea nueva.
 3. No hay segunda plataforma que comparar. El mapa ficticio vigente lista un agente capaz de editar tests, con la señal de fin documentada por consulta, y un coste estimado de 0,40 USD. Cabe en el tope.
 4. Escribe el registro con `elegido.plataforma_id = plataforma-ficticia-a` y `por_que` igual a “el perfil solo habilita esta plataforma; el coste cabe”.
-5. No hay decisión `adoptada`. Arma dos opciones ficticias del mapa: sondear un estado que la fuente documenta, o instalar un fichero de evento en cada repositorio. La primera escala y la segunda no. Abre el piloto de una tarea más pequeña.
+5. No hay decisión `adoptada`. Arma dos opciones ficticias del mapa: sondear un estado que la fuente documenta, o instalar un fichero de evento en cada repositorio. Antes del piloto responde también quién recibe la señal y si el emisor puede autenticarse en el destino. La segunda opción queda `rechazada` sin piloto: no escala, y el perfil no acepta configuración por repositorio. Si además el destino pide una credencial que esa entrega no sabe enviar, ese es otro motivo para no probarla. Abre el piloto solo de la primera, en una tarea más pequeña.
 6. Guarda la decisión en `en_piloto` y pregunta, porque adoptar está en `aprobaciones`. `lanzado` queda en `false`.
 7. Cuando la persona adopta, la puerta se cumple y lanza. Observa con la señal de la opción elegida.
 
@@ -485,7 +542,7 @@ En los tres, `adoptar_integracion` está en `aprobaciones` y en `pregunta`. El a
 3. Compara. Los dos caben. La prioridad `coste` elige B.
 4. El registro lista los dos candidatos, con `encaja: true`, y `elegido` en B. `por_que` cita el importe y la prioridad.
 5. La decisión adoptada se exige solo para B, que es la que se va a usar. A puede seguir sin decisión.
-6. Si B no tiene decisión adoptada, el cuestionario y el piloto son de B. Si el piloto de B falla, el agente vuelve al paso 3 con B descartada y repite la integración para A antes de usarla.
+6. Si B no tiene decisión adoptada, el cuestionario es de B. Una opción que no escala, o cuyo emisor no puede autenticarse en el destino, queda `rechazada` sin piloto. El piloto es solo de la opción que pasa esas respuestas. Si ese piloto falla, el agente vuelve al paso 3 con B descartada y repite la integración para A antes de usarla.
 7. Pregunta para adoptar. No lanza la tarea real hasta la adopción.
 
 ### 7.3 Ninguna plataforma del caso aplicado
@@ -572,7 +629,7 @@ El framework se referencia por una revisión fija. El consumidor no copia `nucle
 | Almacén del consumidor | Git; almacén de clave-valor | Git para perfil, fichas, mapas, decisiones y registro. Los secretos, en un gestor, solo referenciados. |
 | Forma del registro | Un JSON por tarea; un JSONL append-only | Un JSON por tarea, en `registro/<año>/<mes>/`. Se revisa en el diff. |
 | Enumerado de autonomía | Cerrado, como aquí; texto libre | Cerrado. Lo que no esté en `decide_solo` ni en `pregunta` se pregunta. |
-| Consumidor sin organización | Exigir un webhook de organización; aceptar el sondeo de notificaciones cuando el piloto no encuentre un webhook que cubra todos los repos | El piloto lo comprueba. Si no hay un webhook de organización o de aplicación que cubra los repos sin configurarlos uno a uno, la opción elegida pasa a la consulta de notificaciones. No se inventa un alcance de instalación. |
+| Consumidor sin organización | Exigir un webhook que cubra todos los repos; aceptar una consulta periódica; quedarse en el canal que el orquestador ya tiene | La consulta solo entra si quien aprueba no la ha vetado, si la recibe el orquestador y no solo el humano, y si el emisor puede autenticarse. Si no, el piloto sigue en el canal ya existente y no se adopta. No se inventa un alcance de instalación. |
 
 ## Fase 2
 
@@ -580,8 +637,8 @@ Cada paso se da por hecho solo si su comprobación sale bien. No se crea un tag.
 
 1. Añadir los cinco esquemas y los tres perfiles de `ejemplos/`, más tres mapas ficticios. Comprobación: el validador acepta esos ficheros y rechaza un perfil con `valor`.
 2. Añadir `nucleo/` con el ciclo, el perfil, el descubrimiento, la estrategia y la integración, sin nombres del bloque de la sección 6. Comprobación: el job del apartado 8.1 falla si se pega una línea del bloque dentro de `nucleo/`.
-3. Implementar la puerta de salida sobre fixtures, sin red. Comprobación: una tarea del perfil de una plataforma, con decisión ausente, escribe un registro `lanzado: false` y una decisión `en_piloto` con dos opciones y las seis respuestas.
+3. Implementar la puerta de salida sobre fixtures, sin red. Comprobación: una tarea del perfil de una plataforma, con decisión ausente, escribe un registro `lanzado: false` y una decisión `en_piloto` con dos opciones y las siete respuestas. Una opción con `emisor_puede_enviarlo` en false queda `rechazada` y no crea canal. `memoria_durable_actualizada` en true con estado distinto de `adoptada` hace fallar el validador.
 4. La misma puerta con el perfil de dos plataformas. Comprobación: el registro elige la de menor coste estimado y no exige decisión adoptada para la plataforma no elegida.
 5. La misma puerta con el perfil de la sección 7.3, cuyo mapa marca el fin como `no_documentado`. Comprobación: `autonomia` queda en `preguntado` y el registro no contiene líneas del bloque de la sección 6.
-6. Codificar la decisión de la sección 6 como fixture esperado del cuestionario, con estado `en_piloto` y los criterios de piloto. Comprobación: el validador acepta esa fixture y rechaza una variante que use como fin el evento de pasar a revisión lista. Esta fixture puede vivir junto al caso aplicado y el job la excluye del barrido de nombres del núcleo.
+6. Codificar la decisión de la sección 6.5 como fixture esperado del cuestionario, con estado `en_piloto` y los criterios de piloto. Comprobación: el validador acepta esa fixture, rechaza una variante que adopte una entrega cuyo emisor no puede enviar la credencial que el destino exige, y rechaza una variante que use como fin el evento de pasar a revisión lista. Esta fixture puede vivir junto al caso aplicado y el job la excluye del barrido de nombres del núcleo.
 7. Dejar el job de validación en verde en la pull request de esa fase. Parar ahí. El piloto real de una issue espera credencial y aprobación del consumidor, y no forma parte del cierre de la fase 2.
